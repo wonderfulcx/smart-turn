@@ -4,3 +4,13 @@ __pycache__
 .torch_hub
 model-v1
 temp_output.wav
+wandb/
+*.onnx
+output/
+.env
+
+# Hebrew training data and results
+all-hebrew-training/
+datasets/output/
+datasets/tmp/
+benchmark_results/
