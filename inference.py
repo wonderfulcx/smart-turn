@@ -2,14 +2,16 @@ import numpy as np
 import onnxruntime as ort
 from transformers import WhisperFeatureExtractor
 
-ONNX_MODEL_PATH = "smart-turn-v3.0.onnx"
+ONNX_MODEL_PATH = "smart-turn-v3.1-gpu.onnx"
 
 def build_session(onnx_path):
     so = ort.SessionOptions()
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     so.inter_op_num_threads = 1
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    return ort.InferenceSession(onnx_path, sess_options=so)
+    session = ort.InferenceSession(onnx_path, sess_options=so, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    print(f"🚀 ONNX Runtime using: {session.get_providers()[0]}")
+    return session
 
 feature_extractor = WhisperFeatureExtractor(chunk_length=8)
 session = build_session(ONNX_MODEL_PATH)
