@@ -181,7 +181,7 @@ Train ONLY on your Hebrew dataset.
 - May overfit if dataset is small (<1000 samples)
 - Loses knowledge from other languages
 - Not recommended unless you have 2000+ samples
-- **Requires editing train_local.py first** (see command below)
+- **Requires editing train.py first** (see command below)
 
 **When to use:**
 - You have 2000+ Hebrew samples
@@ -210,7 +210,7 @@ echo "WANDB_API_KEY=your-key-here" > .env
 This trains on the original dataset (50k samples, 23 languages) + your Hebrew data.
 
 ```bash
-python train_local.py \
+python train.py \
     --run-name "v3-hebrew-$(date +%Y%m%d)" \
     --batch-size 32 \
     --epochs 4 \
@@ -227,10 +227,10 @@ python train_local.py \
 
 This trains ONLY on your Hebrew dataset. **Requires editing the script first**.
 
-**Step 1: Edit train_local.py**
+**Step 1: Edit train.py**
 ```bash
 # Open the file
-nano train_local.py
+nano train.py
 
 # Find line 56-58 and comment out the default dataset:
 "datasets_training": [
@@ -242,7 +242,7 @@ nano train_local.py
 
 **Step 2: Run training**
 ```bash
-python train_local.py \
+python train.py \
     --run-name "hebrew-only-$(date +%Y%m%d)" \
     --batch-size 32 \
     --epochs 4 \
@@ -257,26 +257,26 @@ python train_local.py \
 
 ```bash
 # Different learning rate
-python train_local.py \
+python train.py \
     --run-name "hebrew-custom" \
     --learning-rate 3e-5 \
     --add-dataset "./datasets/output/smart-turn-hebrew-v2-train"
 
 # More epochs (if not overfitting)
-python train_local.py \
+python train.py \
     --run-name "hebrew-longer" \
     --epochs 6 \
     --add-dataset "./datasets/output/smart-turn-hebrew-v2-train"
 
 # Smaller batch size (if OOM errors)
-python train_local.py \
+python train.py \
     --run-name "hebrew-small-batch" \
     --batch-size 16 \
     --eval-batch-size 8 \
     --add-dataset "./datasets/output/smart-turn-hebrew-v2-train"
 
 # See all options
-python train_local.py --help
+python train.py --help
 ```
 
 ---
@@ -422,10 +422,10 @@ You can use `LocalSmartTurnAnalyzerV3` with your custom ONNX model.
 
 ```bash
 # Reduce batch size
-python train_local.py --batch-size 16 --eval-batch-size 8 ...
+python train.py --batch-size 16 --eval-batch-size 8 ...
 
 # Or even smaller
-python train_local.py --batch-size 8 --eval-batch-size 4 ...
+python train.py --batch-size 8 --eval-batch-size 4 ...
 ```
 
 ### Training Too Slow
@@ -462,7 +462,7 @@ export WANDB_API_KEY='your-key-here'
 
 # Or run in offline mode (logs saved locally)
 export WANDB_MODE=offline
-python train_local.py ...
+python train.py ...
 
 # Sync later
 wandb sync ./wandb/offline-run-*
@@ -502,21 +502,21 @@ ls -la ./output/{run_name}/final_model/
 
 ```bash
 # Run 1: Baseline
-python train_local.py \
+python train.py \
     --run-name "hebrew-baseline" \
     --learning-rate 5e-5 \
     --epochs 4 \
     --add-dataset "./datasets/output/smart-turn-hebrew-v2-train"
 
 # Run 2: Lower learning rate
-python train_local.py \
+python train.py \
     --run-name "hebrew-lr3e5" \
     --learning-rate 3e-5 \
     --epochs 4 \
     --add-dataset "./datasets/output/smart-turn-hebrew-v2-train"
 
 # Run 3: More epochs
-python train_local.py \
+python train.py \
     --run-name "hebrew-ep6" \
     --learning-rate 5e-5 \
     --epochs 6 \
@@ -555,7 +555,7 @@ DatasetDict({'train': split['test']}).save_to_disk('./datasets/output/smart-turn
 "
 
 # 3. Train (Mixed: Original + Hebrew - Recommended)
-python train_local.py \
+python train.py \
     --run-name "v3-hebrew-$(date +%Y%m%d)" \
     --batch-size 32 \
     --epochs 4 \
@@ -571,11 +571,11 @@ python benchmark_hebrew.py \
 # HEBREW ONLY TRAINING (If you have 2000+ samples)
 # ============================================
 
-# 1. First edit train_local.py line 57:
+# 1. First edit train.py line 57:
 #    Comment out: # "pipecat-ai/smart-turn-data-v3-train",
 
 # 2. Then run training:
-python train_local.py \
+python train.py \
     --run-name "hebrew-only-$(date +%Y%m%d)" \
     --batch-size 32 \
     --epochs 4 \
@@ -588,7 +588,7 @@ python train_local.py \
 
 | File/Directory | Description |
 |----------------|-------------|
-| `train_local.py` | Main training script |
+| `train.py` | Main training script |
 | `NEXT_STEPS.md` | This file |
 | `HEBREW_TRAINING_SUMMARY.md` | Initial setup summary |
 | `all-hebrew-training/` | Your raw audio files |

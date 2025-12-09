@@ -18,11 +18,14 @@ echo "📊 This will train for just a few steps to verify the setup"
 echo ""
 
 # Run training with Hebrew data only, for just a few steps
-python train_local.py \
+python train.py \
     --run-name "test-hebrew-smoke" \
     --batch-size 4 \
     --eval-batch-size 4 \
     --epochs 1 \
+    --eval-steps 50 \
+    --save-steps 100 \
+    --logging-steps 10 \
     --add-dataset "./datasets/output/smart-turn-hebrew-train" \
     --wandb-project "smart-turn-ft"
 
