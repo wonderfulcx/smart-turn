@@ -32,8 +32,9 @@ CONFIG = {
     "base_model_name": "openai/whisper-tiny",
 
     # Default datasets - use HuggingFace Hub paths or local paths starting with /
-    "datasets_training": ["pipecat-ai/smart-turn-data-v3-train"],
-    "datasets_test": ["pipecat-ai/smart-turn-data-v3-test"],
+    # v3.1 has 270K samples (10x larger than v3) with better language coverage
+    "datasets_training": ["pipecat-ai/smart-turn-data-v3.1-train"],
+    "datasets_test": ["pipecat-ai/smart-turn-data-v3.1-test"],
 
     "learning_rate": 5e-5,
     "num_epochs": 4,
