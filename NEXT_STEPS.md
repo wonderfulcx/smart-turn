@@ -234,7 +234,7 @@ nano train.py
 
 # Find line 56-58 and comment out the default dataset:
 "datasets_training": [
-    # "pipecat-ai/smart-turn-data-v3-train",  # ← Add # to comment out
+    # "pipecat-ai/smart-turn-data-v3.1-train",  # ← Add # to comment out
 ],
 
 # Save and exit (Ctrl+X, Y, Enter)
@@ -572,7 +572,7 @@ python benchmark_hebrew.py \
 # ============================================
 
 # 1. First edit train.py line 57:
-#    Comment out: # "pipecat-ai/smart-turn-data-v3-train",
+#    Comment out: # "pipecat-ai/smart-turn-data-v3.1-train",
 
 # 2. Then run training:
 python train.py \
