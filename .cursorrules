@@ -1,0 +1,244 @@
+# Cursor Rules: Smart Turn Hebrew Training Environment
+
+## Environment Overview
+
+This is a **remote AWS EC2 instance** accessed via SSH through Cursor IDE.
+
+### Machine Specifications
+- **Instance Type**: GPU-enabled EC2 (with NVIDIA Tesla T4 GPU)
+- **OS**: Ubuntu Linux (6.14.0-1016-aws)
+- **Architecture**: Turing GPU (does NOT support TF32)
+- **Storage**: 242GB EBS volume
+- **Connection**: SSH remote development via Cursor
+
+### GPU Configuration
+- **GPU**: NVIDIA Tesla T4 (16GB VRAM)
+- **CUDA**: Available via onnxruntime-gpu and PyTorch
+- **Important**: TF32 must be disabled (`tf32=False`) as T4 doesn't support it
+- **Compute Capability**: 7.5 (Turing architecture)
+
+### Python Environment
+- **Python**: 3.12
+- **Virtual Environment**: `/home/ubuntu/workspace/smart-turn/venv/`
+- **Always activate before running scripts**: `source venv/bin/activate`
+
+## Project: Smart Turn V3 Hebrew Language Training
+
+### Project Structure
+```
+/home/ubuntu/workspace/smart-turn/
+├── train.py                    # Main training script (consolidated, local + CLI)
+├── inference.py                # ONNX inference with GPU support
+├── benchmark_hebrew.py         # Hebrew evaluation script
+├── predict.py                  # Example prediction usage
+├── logger.py                   # Custom logging utilities
+├── benchmark.py                # General benchmarking utilities
+├── requirements.txt            # Python dependencies
+├── .env                        # Environment variables (WANDB_API_KEY)
+├── venv/                       # Python virtual environment
+├── datasets/
+│   ├── scripts/
+│   │   └── raw_to_hf_dataset.py  # Convert raw audio to HF dataset
+│   └── output/
+│       ├── smart-turn-hebrew-train/    # 179 Hebrew training samples
+│       └── smart-turn-hebrew-test/     # 86 Hebrew test samples
+├── output/                     # Training outputs (checkpoints, models)
+├── wandb/                      # Weights & Biases logs
+└── NEXT_STEPS.md              # Comprehensive training guide
+```
+
+### Key Files
+
+#### `train.py` (Main Training Script)
+- **Purpose**: Train Smart Turn model with CLI support
+- **Key Features**:
+  - CLI arguments for flexible configuration
+  - Supports local + HuggingFace Hub datasets
+  - Loads multiple datasets and concatenates them
+  - W&B integration for tracking
+  - ONNX export (FP32 + quantization)
+  - Hardware-aware settings (TF32 disabled for T4)
+
+#### `benchmark_hebrew.py`
+- **Purpose**: Evaluate model on Hebrew data
+- **Features**: Flexible input formats, W&B logging, confusion matrices
+- **Recommended threshold**: 0.3 for Hebrew
+
+### Dataset Configuration
+
+#### V3.1 Dataset (from HuggingFace Hub)
+- **Training**: `pipecat-ai/smart-turn-data-v3.1-train` (270,429 samples)
+- **Test**: `pipecat-ai/smart-turn-data-v3.1-test` (~31,500 samples)
+- **Languages**: 23 languages (NO Hebrew originally)
+- **Size**: ~37GB (requires download on first use)
+- **Split**: Pre-split 90/10 train/test by Smart Turn team
+
+#### Hebrew Dataset (Local)
+- **Training**: `./datasets/output/smart-turn-hebrew-train` (199 samples → 179 train, 20 eval)
+- **Test**: `./datasets/output/smart-turn-hebrew-test` (86 samples)
+- **Language**: Hebrew (heb)
+- **Status**: Small dataset - needs expansion to 1,000-10,000+ samples for production
+
+### Training Workflow
+
+#### How Multi-Dataset Loading Works
+1. **Command**: `--add-dataset "./datasets/output/smart-turn-hebrew-train"`
+2. **CONFIG update**: Appends to `datasets_training` list:
+   ```python
+   ["pipecat-ai/smart-turn-data-v3.1-train", "./datasets/output/smart-turn-hebrew-train"]
+   ```
+3. **Loading**: `prepare_datasets_ondemand()` loops through list:
+   - Detects path type (`./` = local disk, else = HuggingFace Hub)
+   - Loads each dataset via `load_dataset_at()`
+   - Splits each into 90% train / 10% eval
+4. **Merging**: `concatenate_datasets()` combines all training splits
+5. **Result**: Single merged dataset (e.g., 243K v3.1 + 179 Hebrew = 243,179 samples)
+
+#### Training Commands
+
+**Mixed Training (Hebrew + v3.1):**
+```bash
+source venv/bin/activate
+source .env  # Load WANDB_API_KEY
+
+python train.py \
+    --run-name "hebrew-v3.1-$(date +%Y%m%d)" \
+    --add-dataset "./datasets/output/smart-turn-hebrew-train" \
+    --test-dataset "./datasets/output/smart-turn-hebrew-test" \
+    --wandb-project "smart-turn-ft"
+```
+
+**Hebrew-Only Training:**
+```bash
+python train.py \
+    --run-name "hebrew-only-$(date +%Y%m%d)" \
+    --replace-datasets \
+    --add-dataset "./datasets/output/smart-turn-hebrew-train" \
+    --test-dataset "./datasets/output/smart-turn-hebrew-test" \
+    --wandb-project "smart-turn-ft"
+```
+
+### Environment Variables
+- **WANDB_API_KEY**: Required for W&B logging (stored in `.env`)
+- **HF_TOKEN**: Optional for private HuggingFace datasets
+
+### Git Branch
+- **Current Branch**: `hebrew-training-v1`
+- **Repository**: `wonderfulcx/smart-turn` (forked from `pipecat-ai/smart-turn`)
+- **SSH Keys**: Configured for GitHub push access
+
+## Important Constraints & Settings
+
+### Hardware Limitations
+1. **TF32**: Must be disabled (`tf32=False` in TrainingArguments)
+2. **VRAM**: 16GB - batch sizes should be conservative
+3. **Disk**: 242GB - enough for v3.1 dataset + checkpoints
+
+### Training Defaults (from CONFIG)
+```python
+"learning_rate": 5e-5
+"num_epochs": 4
+"train_batch_size": 384  # Reduce if OOM
+"eval_batch_size": 128
+"warmup_ratio": 0.2
+"weight_decay": 0.01
+"eval_steps": 500
+"save_steps": 500
+"logging_steps": 100
+```
+
+### Model Architecture
+- **Base Model**: `openai/whisper-tiny` (4 encoder layers, 384d)
+- **Total Parameters**: 8M (7.8M trainable)
+- **Custom Components**:
+  - Attention pooling head (384 → 256 → 1)
+  - Classifier head (384 → 256 → 64 → 1)
+- **Task**: Binary classification (complete vs incomplete turn)
+
+## Best Practices
+
+### Before Running Training
+1. Activate venv: `source venv/bin/activate`
+2. Load environment: `source .env`
+3. Check disk space: `df -h /home/ubuntu/`
+4. Verify GPU: `nvidia-smi`
+
+### During Training
+- Monitor via W&B: https://wandb.ai/wonderful-ai/smart-turn-ft
+- Check terminal for progress logs
+- Training saves checkpoints every 500 steps
+
+### After Training
+- Model saved in: `./output/{run_name}/final_model/`
+- ONNX exports in: `./output/{run_name}/final_model/exports/`
+- Benchmark with: `python benchmark_hebrew.py`
+
+## Data Collection Goals
+
+### Current Hebrew Data Status
+- **Current**: 285 samples (199 train, 86 test)
+- **Minimal Target**: 1,000 samples (basic functionality)
+- **Recommended Target**: 5,000-10,000 samples (production ready)
+- **Optimal Target**: 25,000+ samples (competitive with major languages)
+
+### Context
+- Average language in v3.1: ~11,750 samples
+- English (largest): ~29,500 samples (148x more than current Hebrew)
+- Your 199 Hebrew = 0.07% of total dataset
+
+## Common Issues & Solutions
+
+### Issue: "No space left on device"
+**Solution**: Disk expanded to 242GB, should no longer occur
+
+### Issue: "TF32 requires Ampere or newer GPU"
+**Solution**: Already fixed in `train.py` (line 980: `tf32=False`)
+
+### Issue: "ModuleNotFoundError: No module named 'onnxscript'"
+**Solution**: Already installed in venv
+
+### Issue: WANDB_API_KEY not set
+**Solution**: Run `source .env` before training
+
+## Notes for AI Assistant
+
+1. **Never suggest TF32 enablement** - T4 GPU doesn't support it
+2. **Always mention venv activation** in commands
+3. **This is a remote SSH session** - no local file system access
+4. **Dataset downloads happen automatically** during training
+5. **Git operations** require SSH keys (already configured)
+6. **Disk space is adequate** now (242GB available)
+
+## Quick Reference
+
+### Check GPU
+```bash
+nvidia-smi
+```
+
+### Check Disk Space
+```bash
+df -h /home/ubuntu/
+```
+
+### View Training Logs
+```bash
+tail -f wandb/latest-run/logs/debug.log
+```
+
+### Test Inference
+```bash
+python predict.py --audio path/to/audio.wav
+```
+
+### Run Smoke Test
+```bash
+bash test_hebrew_training.sh
+```
+
+---
+
+**Last Updated**: December 2024
+**Environment**: EC2 + SSH Remote Development via Cursor
+**Project Goal**: Add Hebrew language support to Smart Turn V3 model
+
