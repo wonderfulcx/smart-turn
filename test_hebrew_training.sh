@@ -33,6 +33,7 @@ python train.py \
     --logging-steps 10 \
     --replace-datasets \
     --add-dataset "./datasets/output/smart-turn-hebrew-train" \
+    --replace-test-datasets \
     --test-dataset "./datasets/output/smart-turn-hebrew-test" \
     --wandb-project "smart-turn-ft"
 

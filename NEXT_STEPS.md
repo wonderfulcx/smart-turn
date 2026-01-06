@@ -225,30 +225,26 @@ python train.py \
 
 ### Option B: Hebrew Only Training
 
-This trains ONLY on your Hebrew dataset. **Requires editing the script first**.
+This trains ONLY on your Hebrew dataset and evaluates ONLY on Hebrew test set.
 
-**Step 1: Edit train.py**
-```bash
-# Open the file
-nano train.py
+**No editing needed** - just use the `--replace-datasets` and `--replace-test-datasets` flags!
 
-# Find line 56-58 and comment out the default dataset:
-"datasets_training": [
-    # "pipecat-ai/smart-turn-data-v3.1-train",  # ← Add # to comment out
-],
-
-# Save and exit (Ctrl+X, Y, Enter)
-```
-
-**Step 2: Run training**
 ```bash
 python train.py \
     --run-name "hebrew-only-$(date +%Y%m%d)" \
     --batch-size 32 \
     --epochs 4 \
+    --replace-datasets \
     --add-dataset "./datasets/output/smart-turn-hebrew-v2-train" \
+    --replace-test-datasets \
+    --test-dataset "./datasets/output/smart-turn-hebrew-v2-test" \
     --wandb-project "smart-turn-ft"
 ```
+
+**Important flags:**
+- `--replace-datasets`: Replace default training data (don't add to it)
+- `--replace-test-datasets`: Replace default test data (don't add to it)
+- Without these flags, your Hebrew data is **added** to v3.1 (mixed training)
 
 **Expected time**: 10-30 minutes (depends on dataset size)  
 **Warning**: May overfit with small datasets (<1000 samples)
@@ -286,6 +282,23 @@ python train.py \
 # See all options
 python train.py --help
 ```
+
+### ⚠️ Important: Understanding Dataset Flags
+
+**By default, datasets are ADDED, not replaced:**
+
+| Command | Training Data | Test Data |
+|---------|---------------|-----------|
+| `--add-dataset hebrew-train` | v3.1 (270K) **+** Hebrew (2.6K) | v3.1-test (31K) |
+| `--add-dataset hebrew-train`<br>`--test-dataset hebrew-test` | v3.1 (270K) **+** Hebrew (2.6K) | v3.1-test (31K) **+** Hebrew (1.1K) |
+| `--replace-datasets`<br>`--add-dataset hebrew-train` | Hebrew (2.6K) **only** | v3.1-test (31K) |
+| `--replace-datasets`<br>`--add-dataset hebrew-train`<br>`--replace-test-datasets`<br>`--test-dataset hebrew-test` | Hebrew (2.6K) **only** | Hebrew (1.1K) **only** |
+
+**Why this matters:**
+- If you see v3.1 test metrics in W&B but expected Hebrew-only → you forgot `--replace-test-datasets`
+- If training takes 12 hours but you expected 15 minutes → you forgot `--replace-datasets`
+- For mixed training (recommended): use `--add-dataset` WITHOUT `--replace-datasets`
+- For Hebrew-only training: use BOTH `--replace-datasets` AND `--replace-test-datasets`
 
 ---
 

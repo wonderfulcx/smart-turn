@@ -875,6 +875,8 @@ def parse_args():
                         help="Replace default datasets instead of adding to them")
     parser.add_argument("--test-dataset", type=str, action="append", default=[],
                         help="Additional test dataset path (can be used multiple times)")
+    parser.add_argument("--replace-test-datasets", action="store_true",
+                        help="Replace default test datasets instead of adding to them")
     
     # W&B configuration
     parser.add_argument("--wandb-project", type=str, default="speech-endpointing",
@@ -925,7 +927,9 @@ def main():
     elif args.add_dataset:
         CONFIG["datasets_training"] = CONFIG["datasets_training"] + args.add_dataset
     
-    if args.test_dataset:
+    if args.replace_test_datasets and args.test_dataset:
+        CONFIG["datasets_test"] = args.test_dataset
+    elif args.test_dataset:
         CONFIG["datasets_test"] = CONFIG["datasets_test"] + args.test_dataset
     
     # Store additional config for W&B
