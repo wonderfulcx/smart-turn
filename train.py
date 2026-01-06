@@ -7,6 +7,7 @@ import numpy as np
 import onnx
 import torch
 import wandb
+from dotenv import load_dotenv
 from onnxruntime.quantization import quantize_static, CalibrationDataReader, QuantType, quant_pre_process, \
     QuantFormat, CalibrationMethod
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
@@ -895,6 +896,9 @@ def parse_args():
 
 def main():
     """Main entry point for local training."""
+    # Load environment variables from .env file
+    load_dotenv(override=True)
+    
     args = parse_args()
     
     # Update CONFIG with command line arguments
@@ -970,7 +974,12 @@ def do_training_run_local(run_name_suffix: str, output_base_dir: str, wandb_proj
     if not no_wandb:
         wandb_api_key = os.environ.get("WANDB_API_KEY")
         if not wandb_api_key:
-            raise ValueError("WANDB_API_KEY environment variable not set")
+            raise ValueError(
+                "WANDB_API_KEY environment variable not set.\n"
+                "Set it with: export WANDB_API_KEY='your-key-here'\n"
+                "Or create a .env file with: WANDB_API_KEY=your-key-here\n"
+                "Or disable W&B with: --no-wandb"
+            )
 
         wandb_run = wandb.init(
             project=wandb_project,

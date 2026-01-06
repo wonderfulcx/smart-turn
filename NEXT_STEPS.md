@@ -199,10 +199,14 @@ cd /home/ubuntu/workspace/smart-turn
 source venv/bin/activate
 
 # Set your W&B API key (for real-time monitoring)
+# Option 1: Create .env file (automatically loaded by train.py)
+echo "WANDB_API_KEY=your-key-here" > .env
+
+# Option 2: Export as environment variable (if you prefer)
 export WANDB_API_KEY='your-wandb-api-key-here'
 
-# Or create .env file:
-echo "WANDB_API_KEY=your-key-here" > .env
+# Option 3: Disable W&B entirely (for testing)
+# Just add --no-wandb to your training command
 ```
 
 ### Option A: Mixed Training (Recommended) ⭐
