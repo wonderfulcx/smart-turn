@@ -211,19 +211,22 @@ export WANDB_API_KEY='your-wandb-api-key-here'
 
 ### Option A: Mixed Training (Recommended) ⭐
 
-This trains on the original dataset (50k samples, 23 languages) + your Hebrew data.
+This trains on the original dataset (270k samples, 23 languages) + your Hebrew data.
 
 ```bash
 python train.py \
-    --run-name "v3-hebrew-$(date +%Y%m%d)" \
-    --batch-size 32 \
+    --run-name "v3.1-hebrew-$(date +%Y%m%d)" \
+    --batch-size 16 \
+    --eval-batch-size 16 \
     --epochs 4 \
-    --add-dataset "./datasets/output/smart-turn-hebrew-v2-train" \
+    --add-dataset "./datasets/output/smart-turn-hebrew-train" \
+    --test-dataset "./datasets/output/smart-turn-hebrew-test" \
     --wandb-project "smart-turn-ft"
 ```
 
-**Expected time**: 4-5 hours  
-**Note**: First run will download ~3GB original dataset automatically
+**Expected time**: 12-16 hours (T4 GPU)
+**Batch size**: 16 (optimized for T4's 16GB VRAM)  
+**Note**: First run will download ~37GB v3.1 dataset automatically
 
 ---
 
@@ -234,24 +237,30 @@ This trains ONLY on your Hebrew dataset and evaluates ONLY on Hebrew test set.
 **No editing needed** - just use the `--replace-datasets` and `--replace-test-datasets` flags!
 
 ```bash
+# Use the convenient helper script:
+bash train_hebrew_full.sh
+
+# Or run directly:
 python train.py \
     --run-name "hebrew-only-$(date +%Y%m%d)" \
-    --batch-size 32 \
+    --batch-size 16 \
+    --eval-batch-size 16 \
     --epochs 4 \
     --replace-datasets \
-    --add-dataset "./datasets/output/smart-turn-hebrew-v2-train" \
+    --add-dataset "./datasets/output/smart-turn-hebrew-train" \
     --replace-test-datasets \
-    --test-dataset "./datasets/output/smart-turn-hebrew-v2-test" \
+    --test-dataset "./datasets/output/smart-turn-hebrew-test" \
     --wandb-project "smart-turn-ft"
 ```
 
 **Important flags:**
+- `--batch-size 16`: Optimized for T4 GPU (16GB VRAM)
 - `--replace-datasets`: Replace default training data (don't add to it)
 - `--replace-test-datasets`: Replace default test data (don't add to it)
 - Without these flags, your Hebrew data is **added** to v3.1 (mixed training)
 
-**Expected time**: 10-30 minutes (depends on dataset size)  
-**Warning**: May overfit with small datasets (<1000 samples)
+**Expected time**: 15-20 minutes for 3.7K samples (T4 GPU)
+**Dataset**: 2,603 training samples, 1,116 test samples
 
 ### Custom Training Options
 

@@ -138,14 +138,17 @@ python train.py \
 ```python
 "learning_rate": 5e-5
 "num_epochs": 4
-"train_batch_size": 384  # Reduce if OOM
-"eval_batch_size": 128
+"train_batch_size": 384  # ⚠️ TOO LARGE FOR T4! Use --batch-size 16
+"eval_batch_size": 128   # ⚠️ TOO LARGE FOR T4! Use --eval-batch-size 16
 "warmup_ratio": 0.2
 "weight_decay": 0.01
 "eval_steps": 500
 "save_steps": 500
 "logging_steps": 100
 ```
+
+**IMPORTANT:** Default batch sizes are for Modal's L4 GPU (24GB).
+For T4 (16GB), ALWAYS specify: `--batch-size 16 --eval-batch-size 16`
 
 ### Model Architecture
 - **Base Model**: `openai/whisper-tiny` (4 encoder layers, 384d)
