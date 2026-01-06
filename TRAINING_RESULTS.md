@@ -175,10 +175,12 @@ This means we have very limited visibility into the learning process.
 
 ### Training Curves Analysis
 
-Visual inspection of `training_curves.png` shows:
+Visual inspection shows:
 - Training loss decreasing steadily
 - Only one validation point (insufficient for analysis)
 - No clear plateau in learning
+
+**View detailed curves in W&B**: https://wandb.ai/wonderful-ai/smart-turn-ft
 
 ### Conclusion
 **The model is likely underfitting** and could benefit from:
@@ -317,8 +319,18 @@ Estimated time: ~2 hours
 
 ---
 
-## W&B Dashboard
-View detailed training metrics: https://wandb.ai/wonderful-ai/smart-turn-ft/runs/v3.1-hebrew-full-20260106-0846
+## W&B Dashboard 📊
+
+View interactive training metrics and curves:
+**https://wandb.ai/wonderful-ai/smart-turn-ft**
+
+The dashboard includes:
+- Interactive loss curves (training & validation)
+- F1, Precision, Recall progression
+- Confusion matrices
+- Learning rate schedule
+- GPU utilization and system metrics
+- Compare multiple runs side-by-side
 
 ---
 
