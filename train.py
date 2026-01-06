@@ -119,10 +119,9 @@ class SmartTurnV3Model(WhisperPreTrainedModel):
         logits = self.classifier(pooled)
 
         if labels is not None:
-            # Calculate positive sample weight based on batch statistics
+            labels = labels.float()
             pos_weight = ((labels == 0).sum() / (labels == 1).sum()).clamp(min=0.1, max=10.0)
             loss_fct = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            labels = labels.float()
             loss = loss_fct(logits.view(-1), labels.view(-1))
 
             probs = torch.sigmoid(logits.detach())
@@ -641,11 +640,39 @@ def compute_metrics(eval_pred):
 
     tn, fp, fn, tp = confusion_matrix(labels, preds).ravel()
 
+    # Binary metrics (positive class only - for backward compatibility)
+    binary_precision = precision_score(labels, preds, zero_division=0)
+    binary_recall = recall_score(labels, preds, zero_division=0)
+    binary_f1 = f1_score(labels, preds, zero_division=0)
+    
+    # Macro-averaged metrics (average across both classes)
+    macro_precision = precision_score(labels, preds, average='macro', zero_division=0)
+    macro_recall = recall_score(labels, preds, average='macro', zero_division=0)
+    macro_f1 = f1_score(labels, preds, average='macro', zero_division=0)
+    
+    # Per-class metrics
+    class_precision = precision_score(labels, preds, average=None, zero_division=0)
+    class_recall = recall_score(labels, preds, average=None, zero_division=0)
+    class_f1 = f1_score(labels, preds, average=None, zero_division=0)
+
     return {
         "accuracy": accuracy_score(labels, preds),
-        "precision": precision_score(labels, preds, zero_division="warn"),
-        "recall": recall_score(labels, preds, zero_division="warn"),
-        "f1": f1_score(labels, preds, zero_division="warn"),
+        # Binary metrics (positive class = "complete")
+        "precision": binary_precision,
+        "recall": binary_recall,
+        "f1": binary_f1,
+        # Macro-averaged metrics (both classes)
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
+        "macro_f1": macro_f1,
+        # Per-class metrics
+        "class0_precision": class_precision[0],  # Incomplete
+        "class0_recall": class_recall[0],        # Incomplete
+        "class0_f1": class_f1[0],                # Incomplete
+        "class1_precision": class_precision[1],  # Complete
+        "class1_recall": class_recall[1],        # Complete
+        "class1_f1": class_f1[1],                # Complete
+        # Confusion matrix components
         "pred_positives": tp + fp,
         "pred_negatives": tn + fn,
         "true_positives": tp,
@@ -693,6 +720,7 @@ def do_training_run(run_name_suffix: str):
     wandb_run.define_metric(name="exttest/*", step_metric="train/global_step")
 
     model = SmartTurnV3Model.from_pretrained(CONFIG["base_model_name"], num_labels=1, ignore_mismatched_sizes=True)
+    
     feature_extractor = WhisperFeatureExtractor(chunk_length=8) # 8 seconds
 
     log_model_structure(model, CONFIG)
@@ -993,6 +1021,7 @@ def do_training_run_local(run_name_suffix: str, output_base_dir: str, wandb_proj
         report_to = []
 
     model = SmartTurnV3Model.from_pretrained(CONFIG["base_model_name"], num_labels=1, ignore_mismatched_sizes=True)
+    
     feature_extractor = WhisperFeatureExtractor(chunk_length=8)  # 8 seconds
 
     log_model_structure(model, CONFIG)
