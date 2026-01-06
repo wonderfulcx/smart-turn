@@ -262,6 +262,14 @@ python train.py \
     --learning-rate 3e-5 \
     --add-dataset "./datasets/output/smart-turn-hebrew-v2-train"
 
+# Enable early stopping (stops training if no improvement for 3 evaluations)
+python train.py \
+    --run-name "hebrew-earlystop" \
+    --early-stopping \
+    --early-stopping-patience 3 \
+    --early-stopping-threshold 0.001 \
+    --add-dataset "./datasets/output/smart-turn-hebrew-v2-train"
+
 # More epochs (if not overfitting)
 python train.py \
     --run-name "hebrew-longer" \
@@ -278,6 +286,68 @@ python train.py \
 # See all options
 python train.py --help
 ```
+
+---
+
+## Step 4.5: Early Stopping (Optional) ⏱️
+
+Early stopping automatically halts training when the model stops improving, saving time and preventing overfitting.
+
+### When to Use Early Stopping
+
+**✅ Recommended for:**
+- Long training runs (mixed training with v3.1 dataset, ~12-16 hours)
+- Production models where you want the best checkpoint
+- When you're unsure how many epochs are optimal
+
+**❌ Skip for:**
+- Initial experiments with small Hebrew dataset
+- When you want to see full training dynamics
+- Quick smoke tests (already very fast)
+
+### How It Works
+
+```bash
+python train.py \
+    --run-name "hebrew-production" \
+    --early-stopping \
+    --early-stopping-patience 3 \
+    --early-stopping-threshold 0.001 \
+    --add-dataset "./datasets/output/smart-turn-hebrew-train"
+```
+
+**Parameters:**
+- `--early-stopping`: Enable the feature (disabled by default)
+- `--early-stopping-patience 3`: Stop after 3 evaluations without improvement
+  - With `eval_steps=500`, this means 1,500 steps (3 × 500)
+  - At ~2-3 min/500 steps, patience=3 gives ~6-9 minutes grace period
+- `--early-stopping-threshold 0.001`: Require at least 0.1% F1 improvement
+
+**What Happens:**
+1. Model evaluates every 500 steps (default `eval_steps`)
+2. Tracks F1 score on validation set
+3. If F1 doesn't improve by 0.1% for 3 consecutive evaluations → training stops
+4. Automatically loads the **best checkpoint** (highest F1) at the end
+
+### Example Scenarios
+
+**Scenario 1: Model plateaus early**
+- Epoch 1: F1 = 0.75 → 0.78 → 0.82 ✅ (improving)
+- Epoch 2: F1 = 0.83 → 0.83 → 0.82 ⚠️ (no improvement for 3 evals)
+- **Result**: Training stops, saves 2+ epochs of time, uses epoch 2 checkpoint
+
+**Scenario 2: Model keeps improving**
+- Continues for all 4 epochs
+- Uses the best checkpoint from any epoch
+
+### Recommendations by Training Type
+
+| Training Type | Early Stopping | Patience | Why |
+|--------------|----------------|----------|-----|
+| **Hebrew-only (3.7K)** | ❌ Disabled | - | Fast anyway (~15 min), see full curve |
+| **Mixed v3.1 (270K)** | ✅ Enabled | 3-5 | Long run, may plateau before epoch 4 |
+| **Production run** | ✅ Enabled | 3 | Ensures best checkpoint |
+| **Smoke test** | ❌ Disabled | - | Just verifying pipeline works |
 
 ---
 

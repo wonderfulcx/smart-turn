@@ -5,6 +5,11 @@
 cd /home/ubuntu/workspace/smart-turn
 source venv/bin/activate
 
+# Load .env file if it exists
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
 # Check if WANDB_API_KEY is set
 if [ -z "$WANDB_API_KEY" ]; then
     echo "⚠️  WANDB_API_KEY not set. Please set it first:"
@@ -19,14 +24,16 @@ echo ""
 
 # Run training with Hebrew data only, for just a few steps
 python train.py \
-    --run-name "test-hebrew-smoke" \
-    --batch-size 4 \
-    --eval-batch-size 4 \
+    --run-name "smoke-hebrew-3.7k" \
+    --batch-size 8 \
+    --eval-batch-size 8 \
     --epochs 1 \
     --eval-steps 50 \
     --save-steps 100 \
     --logging-steps 10 \
+    --replace-datasets \
     --add-dataset "./datasets/output/smart-turn-hebrew-train" \
+    --test-dataset "./datasets/output/smart-turn-hebrew-test" \
     --wandb-project "smart-turn-ft"
 
 echo ""

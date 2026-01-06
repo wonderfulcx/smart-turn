@@ -19,6 +19,7 @@ from transformers import WhisperFeatureExtractor, WhisperPreTrainedModel, Whispe
 from transformers.models.whisper.modeling_whisper import WhisperEncoder
 # noinspection PyProtectedMember
 from transformers.trainer import Trainer
+from transformers import EarlyStoppingCallback
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import IntervalStrategy
 from transformers.training_args import TrainingArguments
@@ -46,6 +47,11 @@ CONFIG = {
     "eval_steps": 500,
     "save_steps": 500,
     "logging_steps": 100,
+
+    # Early stopping configuration
+    "early_stopping_enabled": False,        # Disabled by default
+    "early_stopping_patience": 3,           # Stop after 3 evals without improvement
+    "early_stopping_threshold": 0.001,      # Minimum 0.1% improvement required
 
     "onnx_opset_version": 18,
     "calibration_dataset_size": 1024,
@@ -702,7 +708,7 @@ def do_training_run(run_name_suffix: str):
         eval_steps=CONFIG["eval_steps"],
         save_steps=CONFIG["save_steps"],
         logging_steps=CONFIG["logging_steps"],
-        load_best_model_at_end=False,
+        load_best_model_at_end=CONFIG["early_stopping_enabled"],
         metric_for_best_model="f1",
         greater_is_better=True,
         learning_rate=CONFIG["learning_rate"],
@@ -725,6 +731,20 @@ def do_training_run(run_name_suffix: str):
     for dataset_name, dataset in datasets["test"].items():
         log_dataset_statistics("test_" + dataset_name, dataset)
 
+    # Build callbacks list
+    callbacks = [ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])]
+    
+    # Add early stopping if enabled
+    if CONFIG["early_stopping_enabled"]:
+        log.info(f"Early stopping enabled: patience={CONFIG['early_stopping_patience']}, "
+                 f"threshold={CONFIG['early_stopping_threshold']}")
+        callbacks.append(EarlyStoppingCallback(
+            early_stopping_patience=CONFIG["early_stopping_patience"],
+            early_stopping_threshold=CONFIG["early_stopping_threshold"]
+        ))
+    else:
+        log.info("Early stopping disabled - training will run for full epochs")
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -732,9 +752,7 @@ def do_training_run(run_name_suffix: str):
         eval_dataset=datasets["eval"],
         compute_metrics=compute_metrics,
         data_collator=SmartTurnDataCollator(),
-        callbacks=[
-            ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])
-        ]
+        callbacks=callbacks
     )
 
     trainer.add_callback(ExternalEvaluationCallback(
@@ -842,6 +860,14 @@ def parse_args():
     parser.add_argument("--logging-steps", type=int, default=None,
                         help="Logging frequency (default: from CONFIG)")
     
+    # Early stopping
+    parser.add_argument("--early-stopping", action="store_true",
+                        help="Enable early stopping (disabled by default)")
+    parser.add_argument("--early-stopping-patience", type=int, default=None,
+                        help="Early stopping patience - evals without improvement (default: from CONFIG)")
+    parser.add_argument("--early-stopping-threshold", type=float, default=None,
+                        help="Minimum improvement threshold for early stopping (default: from CONFIG)")
+    
     # Dataset configuration
     parser.add_argument("--add-dataset", type=str, action="append", default=[],
                         help="Additional training dataset path (can be used multiple times)")
@@ -885,6 +911,14 @@ def main():
     if args.logging_steps is not None:
         CONFIG["logging_steps"] = args.logging_steps
     
+    # Early stopping configuration
+    if args.early_stopping:
+        CONFIG["early_stopping_enabled"] = True
+    if args.early_stopping_patience is not None:
+        CONFIG["early_stopping_patience"] = args.early_stopping_patience
+    if args.early_stopping_threshold is not None:
+        CONFIG["early_stopping_threshold"] = args.early_stopping_threshold
+    
     # Handle dataset configuration
     if args.replace_datasets and args.add_dataset:
         CONFIG["datasets_training"] = args.add_dataset
@@ -905,6 +939,10 @@ def main():
     log.info(f"  Test datasets: {CONFIG['datasets_test']}")
     log.info(f"  Batch size: {CONFIG['train_batch_size']}")
     log.info(f"  Epochs: {CONFIG['num_epochs']}")
+    log.info(f"  Early stopping: {'enabled' if CONFIG['early_stopping_enabled'] else 'disabled'}")
+    if CONFIG['early_stopping_enabled']:
+        log.info(f"    Patience: {CONFIG['early_stopping_patience']} evaluations")
+        log.info(f"    Threshold: {CONFIG['early_stopping_threshold']}")
     log.info(f"  W&B project: {args.wandb_project}")
     
     # Handle different run modes
@@ -960,7 +998,7 @@ def do_training_run_local(run_name_suffix: str, output_base_dir: str, wandb_proj
         eval_steps=CONFIG["eval_steps"],
         save_steps=CONFIG["save_steps"],
         logging_steps=CONFIG["logging_steps"],
-        load_best_model_at_end=False,
+        load_best_model_at_end=CONFIG["early_stopping_enabled"],
         metric_for_best_model="f1",
         greater_is_better=True,
         learning_rate=CONFIG["learning_rate"],
@@ -983,6 +1021,20 @@ def do_training_run_local(run_name_suffix: str, output_base_dir: str, wandb_proj
     for dataset_name, dataset in datasets["test"].items():
         log_dataset_statistics("test_" + dataset_name, dataset)
 
+    # Build callbacks list
+    callbacks = [ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])]
+    
+    # Add early stopping if enabled
+    if CONFIG["early_stopping_enabled"]:
+        log.info(f"Early stopping enabled: patience={CONFIG['early_stopping_patience']}, "
+                 f"threshold={CONFIG['early_stopping_threshold']}")
+        callbacks.append(EarlyStoppingCallback(
+            early_stopping_patience=CONFIG["early_stopping_patience"],
+            early_stopping_threshold=CONFIG["early_stopping_threshold"]
+        ))
+    else:
+        log.info("Early stopping disabled - training will run for full epochs")
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -990,9 +1042,7 @@ def do_training_run_local(run_name_suffix: str, output_base_dir: str, wandb_proj
         eval_dataset=datasets["eval"],
         compute_metrics=compute_metrics,
         data_collator=SmartTurnDataCollator(),
-        callbacks=[
-            ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])
-        ]
+        callbacks=callbacks
     )
 
     trainer.add_callback(ExternalEvaluationCallback(
