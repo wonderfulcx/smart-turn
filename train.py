@@ -31,6 +31,7 @@ from datasets import load_dataset, concatenate_datasets, load_from_disk
 from logger import log, log_model_structure, log_dataset_statistics, log_dependencies, ProgressLoggerCallback
 
 CONFIG = {
+    "run_name_prefix": "v3.2",
     "base_model_name": "openai/whisper-tiny",
 
     # Default datasets - use HuggingFace Hub paths or local paths starting with /
