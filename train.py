@@ -891,14 +891,14 @@ def parse_args():
                         help="Minimum improvement threshold for early stopping (default: from CONFIG)")
     
     # Dataset configuration
-    parser.add_argument("--add-dataset", type=str, action="append", default=[],
-                        help="Additional training dataset path (can be used multiple times)")
-    parser.add_argument("--replace-datasets", action="store_true",
-                        help="Replace default datasets instead of adding to them")
-    parser.add_argument("--test-dataset", type=str, action="append", default=[],
-                        help="Additional test dataset path (can be used multiple times)")
-    parser.add_argument("--replace-test-datasets", action="store_true",
-                        help="Replace default test datasets instead of adding to them")
+    parser.add_argument("--extra-train-data", type=str, action="append", default=[],
+                        help="Add training dataset (appends to default v3.2, use multiple times for multiple datasets)")
+    parser.add_argument("--train-only-custom", action="store_true",
+                        help="Use ONLY custom training data (ignore default v3.2 dataset)")
+    parser.add_argument("--extra-test-data", type=str, action="append", default=[],
+                        help="Add test dataset (appends to default v3.2, use multiple times for multiple datasets)")
+    parser.add_argument("--test-only-custom", action="store_true",
+                        help="Use ONLY custom test data (ignore default v3.2 test dataset)")
     
     # W&B configuration
     parser.add_argument("--wandb-project", type=str, default="speech-endpointing",
@@ -906,11 +906,11 @@ def parse_args():
     parser.add_argument("--no-wandb", action="store_true",
                         help="Disable W&B logging")
     
-    # Actions
-    parser.add_argument("--quantize", type=str, default=None,
-                        help="Path to FP32 ONNX model to quantize (skip training)")
-    parser.add_argument("--benchmark", type=str, nargs="+", default=None,
-                        help="Path(s) to ONNX model(s) to benchmark (skip training)")
+    # Standalone actions (skip training)
+    parser.add_argument("--quantize-only", type=str, default=None,
+                        help="Quantize an existing FP32 ONNX model to INT8 (skips training)")
+    parser.add_argument("--benchmark-only", type=str, nargs="+", default=None,
+                        help="Benchmark existing ONNX model(s) (skips training)")
     
     return parser.parse_args()
 
@@ -947,15 +947,15 @@ def main():
         CONFIG["early_stopping_threshold"] = args.early_stopping_threshold
     
     # Handle dataset configuration
-    if args.replace_datasets and args.add_dataset:
-        CONFIG["datasets_training"] = args.add_dataset
-    elif args.add_dataset:
-        CONFIG["datasets_training"] = CONFIG["datasets_training"] + args.add_dataset
+    if args.train_only_custom and args.extra_train_data:
+        CONFIG["datasets_training"] = args.extra_train_data
+    elif args.extra_train_data:
+        CONFIG["datasets_training"] = CONFIG["datasets_training"] + args.extra_train_data
     
-    if args.replace_test_datasets and args.test_dataset:
-        CONFIG["datasets_test"] = args.test_dataset
-    elif args.test_dataset:
-        CONFIG["datasets_test"] = CONFIG["datasets_test"] + args.test_dataset
+    if args.test_only_custom and args.extra_test_data:
+        CONFIG["datasets_test"] = args.extra_test_data
+    elif args.extra_test_data:
+        CONFIG["datasets_test"] = CONFIG["datasets_test"] + args.extra_test_data
     
     # Store additional config for W&B
     CONFIG["wandb_project"] = args.wandb_project
@@ -975,10 +975,10 @@ def main():
     log.info(f"  W&B project: {args.wandb_project}")
     
     # Handle different run modes
-    if args.quantize:
-        do_quantization_run(args.quantize)
-    elif args.benchmark:
-        do_benchmark_run(args.benchmark)
+    if args.quantize_only:
+        do_quantization_run(args.quantize_only)
+    elif args.benchmark_only:
+        do_benchmark_run(args.benchmark_only)
     else:
         # Override output_dir and wandb project in do_training_run
         do_training_run_local(args.run_name, args.output_dir, args.wandb_project, args.no_wandb)

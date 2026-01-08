@@ -148,8 +148,8 @@ source .env  # Load WANDB_API_KEY
 
 python train.py \
     --run-name "v3.2-hebrew-full" \
-    --add-dataset "./datasets/output/smart-turn-hebrew-train" \
-    --test-dataset "./datasets/output/smart-turn-hebrew-test" \
+    --extra-train-data "./datasets/output/smart-turn-hebrew-train" \
+    --extra-test-data "./datasets/output/smart-turn-hebrew-test" \
     --batch-size 16 \
     --epochs 4 \
     --wandb-project "smart-turn-ft"
