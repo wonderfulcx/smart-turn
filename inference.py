@@ -4,14 +4,16 @@ from transformers import WhisperFeatureExtractor
 
 from audio_utils import truncate_audio_to_last_n_seconds
 
-ONNX_MODEL_PATH = "smart-turn-v3.1.onnx"
+ONNX_MODEL_PATH = "smart-turn-v3.2.onnx"
 
 def build_session(onnx_path):
     so = ort.SessionOptions()
     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     so.inter_op_num_threads = 1
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    return ort.InferenceSession(onnx_path, sess_options=so)
+    session = ort.InferenceSession(onnx_path, sess_options=so, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    print(f"🚀 ONNX Runtime using: {session.get_providers()[0]}")
+    return session
 
 feature_extractor = WhisperFeatureExtractor(chunk_length=8)
 session = build_session(ONNX_MODEL_PATH)

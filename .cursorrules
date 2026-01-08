@@ -1,0 +1,282 @@
+# Cursor Rules: Smart Turn Hebrew Training Environment
+
+## Environment Overview
+
+This is a **remote AWS EC2 instance** accessed via SSH through Cursor IDE.
+
+### Machine Specifications
+- **Instance Type**: GPU-enabled EC2 (with NVIDIA Tesla T4 GPU)
+- **OS**: Ubuntu Linux (6.14.0-1016-aws)
+- **Architecture**: Turing GPU (does NOT support TF32)
+- **Storage**: 242GB EBS volume
+- **Connection**: SSH remote development via Cursor
+
+### GPU Configuration
+- **GPU**: NVIDIA Tesla T4 (16GB VRAM)
+- **CUDA**: Available via onnxruntime-gpu and PyTorch
+- **Important**: TF32 must be disabled (`tf32=False`) as T4 doesn't support it
+- **Compute Capability**: 7.5 (Turing architecture)
+
+### Python Environment
+- **Python**: 3.12
+- **Virtual Environment**: `/home/ubuntu/workspace/smart-turn/venv/`
+- **Always activate before running scripts**: `source venv/bin/activate`
+
+## Project: Smart Turn V3.2 Hebrew Language Training
+
+### Project Structure
+```
+/home/ubuntu/workspace/smart-turn/
+├── train.py                    # Main training script (consolidated, local + CLI)
+├── inference.py                # ONNX inference with GPU support
+├── audio_utils.py              # Audio preprocessing (truncate, zero-pad)
+├── calibrate_threshold.py      # Threshold calibration script
+├── export_checkpoint.py        # Export checkpoints to ONNX
+├── benchmark.py                # General benchmarking utilities
+├── predict.py                  # Example prediction usage
+├── logger.py                   # Custom logging utilities
+├── requirements.txt            # Python dependencies
+├── .env                        # Environment variables (WANDB_API_KEY)
+├── venv/                       # Python virtual environment
+├── datasets/
+│   ├── scripts/
+│   │   └── raw_to_hf_dataset.py  # Convert raw audio to HF dataset
+│   └── output/
+│       ├── smart-turn-hebrew-train/    # 3,719 Hebrew training samples
+│       └── smart-turn-hebrew-test/     # 1,116 Hebrew test samples
+├── output/                     # Training outputs (checkpoints, models)
+└── wandb/                      # Weights & Biases logs
+```
+
+## Critical Findings from Training Experiments
+
+### ⚠️ Model Outputs PROBABILITIES (Not Logits!)
+
+The Smart Turn model applies **sigmoid in the forward pass** before returning output:
+
+```python
+# From train.py SmartTurnV3Model.forward()
+probs = torch.sigmoid(logits)
+return {"logits": probs}  # Actually returns probabilities!
+```
+
+**Implications:**
+- ONNX exported models output probabilities (0-1 range)
+- Do NOT apply sigmoid again during inference
+- Threshold directly on the output (e.g., `output > 0.5`)
+
+### Optimal Threshold: 0.5 Probability
+
+Through calibration experiments on Hebrew test data:
+- **Optimal threshold**: 0.5 (probability)
+- **Macro F1 at 0.5**: ~0.85 (15K checkpoint), ~0.83 (53K checkpoint)
+- Same threshold works for both Hebrew-tuned and multilingual models
+
+### Audio Preprocessing (v3.2)
+
+**Key change in v3.2**: Short audio (< 8 seconds) is zero-padded at the **beginning** of the waveform:
+
+```python
+# From audio_utils.py
+def truncate_audio_to_last_n_seconds(audio, n_seconds=8, sample_rate=16000):
+    max_samples = n_seconds * sample_rate
+    if len(audio) > max_samples:
+        return audio[-max_samples:]  # Keep last 8 seconds
+    elif len(audio) < max_samples:
+        # Zero-pad at the START (silence before speech)
+        padding = np.zeros(max_samples - len(audio))
+        return np.concatenate([padding, audio])
+    return audio
+```
+
+**Audio requirements:**
+- Sample rate: 16kHz
+- Max duration: 8 seconds (truncates from start, keeps end)
+- Short audio: Zero-padded at beginning
+- Feature extraction: 80 mel bins, 800 frames
+
+### Training Approach: Retrain from Scratch
+
+**Important**: pipecat-ai did NOT release trained model weights, only:
+- Training code
+- Training dataset
+
+This means we **cannot fine-tune** the existing model. We must **retrain from scratch** using:
+1. Original v3.2 dataset (270K samples, 23 languages)
+2. Our Hebrew dataset (3.7K samples)
+
+### Key Checkpoints from Hebrew Training (v3.1 dataset)
+
+| Checkpoint | Hebrew Macro F1 | Multilingual | Best For |
+|------------|-----------------|--------------|----------|
+| **15K steps** | 0.8529 | 0.9451 | Hebrew-specific deployment |
+| **53K steps** | 0.8285 | 0.9543 | Multilingual fallback |
+
+- 15K: Best Hebrew performance
+- 53K: Better multilingual, slightly lower Hebrew
+
+## Dataset Configuration
+
+### V3.2 Dataset (Current - from HuggingFace Hub)
+- **Training**: `pipecat-ai/smart-turn-data-v3.2-train` (270,946 samples)
+- **Test**: `pipecat-ai/smart-turn-data-v3.2-test` (~31,500 samples)
+- **Languages**: 23 languages (NO Hebrew originally)
+- **Size**: ~37GB (requires download on first use)
+- **Change from v3.1**: Zero-padding for short audio at waveform level
+
+### Hebrew Dataset (Local)
+- **Training**: `./datasets/output/smart-turn-hebrew-train` (3,719 samples)
+- **Test**: `./datasets/output/smart-turn-hebrew-test` (1,116 samples)
+- **Language**: Hebrew (heb)
+- **Class distribution (test)**: 80% complete, 20% incomplete
+- **Duration stats**: Mean 2.24s, 98.5% under 8 seconds
+
+### Combined Training
+When training with both datasets:
+- Total samples: ~246K (v3.2) + 3.7K (Hebrew) = ~250K
+- Hebrew becomes the 24th language
+- Class balance maintained (~50/50)
+
+## Training Workflow
+
+### Training Commands
+
+**Full v3.2 + Hebrew Training (Recommended):**
+```bash
+source venv/bin/activate
+source .env  # Load WANDB_API_KEY
+
+python train.py \
+    --run-name "v3.2-hebrew-full" \
+    --extra-train-data "./datasets/output/smart-turn-hebrew-train" \
+    --extra-test-data "./datasets/output/smart-turn-hebrew-test" \
+    --batch-size 16 \
+    --epochs 4 \
+    --wandb-project "smart-turn-ft"
+```
+
+**With tmux for long-running training:**
+```bash
+tmux new -s training
+# Run training command above
+# Detach: Ctrl+b, then d
+# Reattach: tmux attach -t training
+```
+
+### ONNX Export
+
+Export a checkpoint to ONNX:
+```bash
+python export_checkpoint.py \
+    --checkpoint ./output/v3.2-hebrew-full/checkpoint-15000 \
+    --output ./models/smart-turn-hebrew-15k.onnx
+```
+
+### Threshold Calibration
+
+Run calibration on Hebrew test data:
+```bash
+python calibrate_threshold.py \
+    --model ./models/smart-turn-hebrew-15k.onnx \
+    --dataset ./datasets/output/smart-turn-hebrew-test
+```
+
+## Model Architecture
+
+- **Base Model**: `openai/whisper-tiny` (4 encoder layers, 384d)
+- **Total Parameters**: 8M (7.8M trainable)
+- **Custom Components**:
+  - Attention pooling head (384 → 256 → 1)
+  - Classifier head (384 → 256 → 64 → 1)
+- **Output**: Sigmoid probability (0-1) via forward pass
+- **Task**: Binary classification (complete=1 vs incomplete=0)
+
+## Hardware & Training Settings
+
+### Hardware Limitations
+1. **TF32**: Must be disabled (`tf32=False` in TrainingArguments)
+2. **VRAM**: 16GB - batch sizes should be conservative
+3. **Disk**: 242GB - enough for dataset + checkpoints
+
+### Training Defaults
+```python
+"learning_rate": 5e-5
+"num_epochs": 4
+"train_batch_size": 16    # For T4 GPU
+"eval_batch_size": 16     # For T4 GPU
+"warmup_ratio": 0.2
+"weight_decay": 0.01
+"eval_steps": 500
+"save_steps": 500
+"logging_steps": 100
+```
+
+**IMPORTANT:** Default batch sizes in CONFIG are for Modal's L4 GPU (24GB).
+For T4 (16GB), ALWAYS specify: `--batch-size 16`
+
+## Git Configuration
+
+- **Current Branch**: `hebrew-training-v1`
+- **Repository**: `wonderfulcx/smart-turn` (forked from `pipecat-ai/smart-turn`)
+- **SSH Keys**: Configured for GitHub push access
+- **Upstream**: `pipecat-ai/smart-turn` (merged v3.2 changes)
+
+## Common Issues & Solutions
+
+### Issue: Model outputs look wrong (values > 1 or < 0)
+**Solution**: Model outputs probabilities. Do NOT apply sigmoid again.
+
+### Issue: Low Hebrew accuracy
+**Solution**: Check threshold (use 0.5), verify audio preprocessing matches training.
+
+### Issue: "TF32 requires Ampere or newer GPU"
+**Solution**: Already fixed in `train.py` (`tf32=False`)
+
+### Issue: WANDB_API_KEY not set
+**Solution**: Run `source .env` before training
+
+### Issue: CUDA out of memory
+**Solution**: Reduce batch size: `--batch-size 8`
+
+## Notes for AI Assistant
+
+1. **Model outputs probabilities** - sigmoid is applied in forward pass
+2. **Never suggest TF32 enablement** - T4 GPU doesn't support it
+3. **Always mention venv activation** in commands
+4. **This is a remote SSH session** - no local file system access
+5. **Dataset downloads happen automatically** during training
+6. **Threshold is 0.5** - same for Hebrew and multilingual
+7. **v3.2 uses zero-padding** at start for short audio (different from v3.1)
+8. **Must retrain from scratch** - pipecat didn't release model weights
+
+## Quick Reference
+
+### Check GPU
+```bash
+nvidia-smi
+```
+
+### Check Disk Space
+```bash
+df -h /home/ubuntu/
+```
+
+### Monitor Training in tmux
+```bash
+tmux attach -t training
+```
+
+### View W&B Dashboard
+https://wandb.ai/wonderful-ai/smart-turn-ft
+
+### Test Inference
+```bash
+python predict.py --audio path/to/audio.wav
+```
+
+---
+
+**Last Updated**: January 2026
+**Dataset Version**: v3.2
+**Environment**: EC2 + SSH Remote Development via Cursor
+**Project Goal**: Add Hebrew language support to Smart Turn V3.2 model

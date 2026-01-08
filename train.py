@@ -1,3 +1,4 @@
+import argparse
 import os
 from dataclasses import dataclass
 from typing import List, Dict, Union
@@ -6,6 +7,7 @@ import numpy as np
 import onnx
 import torch
 import wandb
+from dotenv import load_dotenv
 from onnxruntime.quantization import quantize_static, CalibrationDataReader, QuantType, quant_pre_process, \
     QuantFormat, CalibrationMethod
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
@@ -18,6 +20,7 @@ from transformers import WhisperFeatureExtractor, WhisperPreTrainedModel, Whispe
 from transformers.models.whisper.modeling_whisper import WhisperEncoder
 # noinspection PyProtectedMember
 from transformers.trainer import Trainer
+from transformers import EarlyStoppingCallback
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import IntervalStrategy
 from transformers.training_args import TrainingArguments
@@ -28,8 +31,11 @@ from datasets import load_dataset, concatenate_datasets, load_from_disk
 from logger import log, log_model_structure, log_dataset_statistics, log_dependencies, ProgressLoggerCallback
 
 CONFIG = {
+    "run_name_prefix": "v3.2",
     "base_model_name": "openai/whisper-tiny",
 
+    # Default datasets - use HuggingFace Hub paths or local paths starting with /
+    # v3.2 has 270K samples with better language coverage
     "datasets_training": ["pipecat-ai/smart-turn-data-v3.2-train"],
     "datasets_test": ["pipecat-ai/smart-turn-data-v3.2-test"],
 
@@ -43,6 +49,11 @@ CONFIG = {
     "eval_steps": 500,
     "save_steps": 500,
     "logging_steps": 100,
+
+    # Early stopping configuration
+    "early_stopping_enabled": False,        # Disabled by default
+    "early_stopping_patience": 3,           # Stop after 3 evals without improvement
+    "early_stopping_threshold": 0.001,      # Minimum 0.1% improvement required
 
     "onnx_opset_version": 18,
     "calibration_dataset_size": 1024,
@@ -303,9 +314,16 @@ def quantize_onnx_model(
 
 
 def load_dataset_at(path: str):
-    if path.startswith('/'):
+    """Load dataset from local path or HuggingFace Hub.
+    
+    - Paths starting with / or ./ are loaded from local disk
+    - Other paths are loaded from HuggingFace Hub
+    """
+    if path.startswith('/') or path.startswith('./'):
+        log.info(f"  Loading from local disk: {path}")
         return load_from_disk(path)["train"]
     else:
+        log.info(f"  Loading from HuggingFace Hub: {path}")
         return load_dataset(path)["train"]
 
 
@@ -617,11 +635,39 @@ def compute_metrics(eval_pred):
 
     tn, fp, fn, tp = confusion_matrix(labels, preds).ravel()
 
+    # Binary metrics (positive class only - for backward compatibility)
+    binary_precision = precision_score(labels, preds, zero_division=0)
+    binary_recall = recall_score(labels, preds, zero_division=0)
+    binary_f1 = f1_score(labels, preds, zero_division=0)
+    
+    # Macro-averaged metrics (average across both classes)
+    macro_precision = precision_score(labels, preds, average='macro', zero_division=0)
+    macro_recall = recall_score(labels, preds, average='macro', zero_division=0)
+    macro_f1 = f1_score(labels, preds, average='macro', zero_division=0)
+    
+    # Per-class metrics
+    class_precision = precision_score(labels, preds, average=None, zero_division=0)
+    class_recall = recall_score(labels, preds, average=None, zero_division=0)
+    class_f1 = f1_score(labels, preds, average=None, zero_division=0)
+
     return {
         "accuracy": accuracy_score(labels, preds),
-        "precision": precision_score(labels, preds, zero_division="warn"),
-        "recall": recall_score(labels, preds, zero_division="warn"),
-        "f1": f1_score(labels, preds, zero_division="warn"),
+        # Binary metrics (positive class = "complete")
+        "precision": binary_precision,
+        "recall": binary_recall,
+        "f1": binary_f1,
+        # Macro-averaged metrics (both classes)
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
+        "macro_f1": macro_f1,
+        # Per-class metrics
+        "class0_precision": class_precision[0],  # Incomplete
+        "class0_recall": class_recall[0],        # Incomplete
+        "class0_f1": class_f1[0],                # Incomplete
+        "class1_precision": class_precision[1],  # Complete
+        "class1_recall": class_recall[1],        # Complete
+        "class1_f1": class_f1[1],                # Complete
+        # Confusion matrix components
         "pred_positives": tp + fp,
         "pred_negatives": tn + fn,
         "true_positives": tp,
@@ -667,6 +713,7 @@ def do_training_run(run_name: str):
     wandb_run.define_metric(name="exttest/*", step_metric="train/global_step")
 
     model = SmartTurnV3Model.from_pretrained(CONFIG["base_model_name"], num_labels=1, ignore_mismatched_sizes=True)
+    
     feature_extractor = WhisperFeatureExtractor(chunk_length=8) # 8 seconds
 
     log_model_structure(model, CONFIG)
@@ -683,7 +730,7 @@ def do_training_run(run_name: str):
         eval_steps=CONFIG["eval_steps"],
         save_steps=CONFIG["save_steps"],
         logging_steps=CONFIG["logging_steps"],
-        load_best_model_at_end=False,
+        load_best_model_at_end=CONFIG["early_stopping_enabled"],
         metric_for_best_model="f1",
         greater_is_better=True,
         learning_rate=CONFIG["learning_rate"],
@@ -706,6 +753,20 @@ def do_training_run(run_name: str):
     for dataset_name, dataset in datasets["test"].items():
         log_dataset_statistics("test_" + dataset_name, dataset)
 
+    # Build callbacks list
+    callbacks = [ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])]
+    
+    # Add early stopping if enabled
+    if CONFIG["early_stopping_enabled"]:
+        log.info(f"Early stopping enabled: patience={CONFIG['early_stopping_patience']}, "
+                 f"threshold={CONFIG['early_stopping_threshold']}")
+        callbacks.append(EarlyStoppingCallback(
+            early_stopping_patience=CONFIG["early_stopping_patience"],
+            early_stopping_threshold=CONFIG["early_stopping_threshold"]
+        ))
+    else:
+        log.info("Early stopping disabled - training will run for full epochs")
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -713,9 +774,7 @@ def do_training_run(run_name: str):
         eval_dataset=datasets["eval"],
         compute_metrics=compute_metrics,
         data_collator=SmartTurnDataCollator(),
-        callbacks=[
-            ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])
-        ]
+        callbacks=callbacks
     )
 
     trainer.add_callback(ExternalEvaluationCallback(
@@ -790,3 +849,267 @@ def do_benchmark_run(model_paths: List[str]):
             markdown_output=f"{benchmark_path}/{model_name}.md",
             batch_size=256
         )
+
+
+def parse_args():
+    """Parse command line arguments for local training."""
+    parser = argparse.ArgumentParser(
+        description="Smart Turn V3 Training Script",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Run configuration
+    parser.add_argument("--run-name", type=str, default="local",
+                        help="Suffix for the run name (will be prefixed with version)")
+    parser.add_argument("--output-dir", type=str, default="./output",
+                        help="Base directory for model outputs")
+    
+    # Training hyperparameters
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="Training batch size (default: from CONFIG)")
+    parser.add_argument("--eval-batch-size", type=int, default=None,
+                        help="Evaluation batch size (default: from CONFIG)")
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Number of training epochs (default: from CONFIG)")
+    parser.add_argument("--learning-rate", type=float, default=None,
+                        help="Learning rate (default: from CONFIG)")
+    
+    # Evaluation and logging
+    parser.add_argument("--eval-steps", type=int, default=None,
+                        help="Evaluation frequency in steps (default: from CONFIG)")
+    parser.add_argument("--save-steps", type=int, default=None,
+                        help="Checkpoint save frequency (default: from CONFIG)")
+    parser.add_argument("--logging-steps", type=int, default=None,
+                        help="Logging frequency (default: from CONFIG)")
+    
+    # Early stopping
+    parser.add_argument("--early-stopping", action="store_true",
+                        help="Enable early stopping (disabled by default)")
+    parser.add_argument("--early-stopping-patience", type=int, default=None,
+                        help="Early stopping patience - evals without improvement (default: from CONFIG)")
+    parser.add_argument("--early-stopping-threshold", type=float, default=None,
+                        help="Minimum improvement threshold for early stopping (default: from CONFIG)")
+    
+    # Dataset configuration
+    parser.add_argument("--extra-train-data", type=str, action="append", default=[],
+                        help="Add training dataset (appends to default v3.2, use multiple times for multiple datasets)")
+    parser.add_argument("--train-only-custom", action="store_true",
+                        help="Use ONLY custom training data (ignore default v3.2 dataset)")
+    parser.add_argument("--extra-test-data", type=str, action="append", default=[],
+                        help="Add test dataset (appends to default v3.2, use multiple times for multiple datasets)")
+    parser.add_argument("--test-only-custom", action="store_true",
+                        help="Use ONLY custom test data (ignore default v3.2 test dataset)")
+    
+    # W&B configuration
+    parser.add_argument("--wandb-project", type=str, default="speech-endpointing",
+                        help="Weights & Biases project name")
+    parser.add_argument("--no-wandb", action="store_true",
+                        help="Disable W&B logging")
+    
+    # Standalone actions (skip training)
+    parser.add_argument("--quantize-only", type=str, default=None,
+                        help="Quantize an existing FP32 ONNX model to INT8 (skips training)")
+    parser.add_argument("--benchmark-only", type=str, nargs="+", default=None,
+                        help="Benchmark existing ONNX model(s) (skips training)")
+    
+    return parser.parse_args()
+
+
+def main():
+    """Main entry point for local training."""
+    # Load environment variables from .env file
+    load_dotenv(override=True)
+    
+    args = parse_args()
+    
+    # Update CONFIG with command line arguments
+    if args.batch_size is not None:
+        CONFIG["train_batch_size"] = args.batch_size
+    if args.eval_batch_size is not None:
+        CONFIG["eval_batch_size"] = args.eval_batch_size
+    if args.epochs is not None:
+        CONFIG["num_epochs"] = args.epochs
+    if args.learning_rate is not None:
+        CONFIG["learning_rate"] = args.learning_rate
+    if args.eval_steps is not None:
+        CONFIG["eval_steps"] = args.eval_steps
+    if args.save_steps is not None:
+        CONFIG["save_steps"] = args.save_steps
+    if args.logging_steps is not None:
+        CONFIG["logging_steps"] = args.logging_steps
+    
+    # Early stopping configuration
+    if args.early_stopping:
+        CONFIG["early_stopping_enabled"] = True
+    if args.early_stopping_patience is not None:
+        CONFIG["early_stopping_patience"] = args.early_stopping_patience
+    if args.early_stopping_threshold is not None:
+        CONFIG["early_stopping_threshold"] = args.early_stopping_threshold
+    
+    # Handle dataset configuration
+    if args.train_only_custom and args.extra_train_data:
+        CONFIG["datasets_training"] = args.extra_train_data
+    elif args.extra_train_data:
+        CONFIG["datasets_training"] = CONFIG["datasets_training"] + args.extra_train_data
+    
+    if args.test_only_custom and args.extra_test_data:
+        CONFIG["datasets_test"] = args.extra_test_data
+    elif args.extra_test_data:
+        CONFIG["datasets_test"] = CONFIG["datasets_test"] + args.extra_test_data
+    
+    # Store additional config for W&B
+    CONFIG["wandb_project"] = args.wandb_project
+    CONFIG["output_base_dir"] = args.output_dir
+    
+    log.info(f"Training configuration:")
+    log.info(f"  Run name: {CONFIG['run_name_prefix']}-{args.run_name}")
+    log.info(f"  Output directory: {args.output_dir}")
+    log.info(f"  Training datasets: {CONFIG['datasets_training']}")
+    log.info(f"  Test datasets: {CONFIG['datasets_test']}")
+    log.info(f"  Batch size: {CONFIG['train_batch_size']}")
+    log.info(f"  Epochs: {CONFIG['num_epochs']}")
+    log.info(f"  Early stopping: {'enabled' if CONFIG['early_stopping_enabled'] else 'disabled'}")
+    if CONFIG['early_stopping_enabled']:
+        log.info(f"    Patience: {CONFIG['early_stopping_patience']} evaluations")
+        log.info(f"    Threshold: {CONFIG['early_stopping_threshold']}")
+    log.info(f"  W&B project: {args.wandb_project}")
+    
+    # Handle different run modes
+    if args.quantize_only:
+        do_quantization_run(args.quantize_only)
+    elif args.benchmark_only:
+        do_benchmark_run(args.benchmark_only)
+    else:
+        # Override output_dir and wandb project in do_training_run
+        do_training_run_local(args.run_name, args.output_dir, args.wandb_project, args.no_wandb)
+
+
+def do_training_run_local(run_name_suffix: str, output_base_dir: str, wandb_project: str, no_wandb: bool = False):
+    """Training run with configurable output directory and W&B project."""
+    log_dependencies()
+
+    run_name = CONFIG["run_name_prefix"] + "-" + run_name_suffix
+
+    log.info(f"Starting training run: {run_name}")
+
+    if not no_wandb:
+        wandb_api_key = os.environ.get("WANDB_API_KEY")
+        if not wandb_api_key:
+            raise ValueError(
+                "WANDB_API_KEY environment variable not set.\n"
+                "Set it with: export WANDB_API_KEY='your-key-here'\n"
+                "Or create a .env file with: WANDB_API_KEY=your-key-here\n"
+                "Or disable W&B with: --no-wandb"
+            )
+
+        wandb_run = wandb.init(
+            project=wandb_project,
+            name=run_name,
+            config=CONFIG
+        )
+        wandb_run.define_metric(name="exttest/*", step_metric="train/global_step")
+        report_to = ["wandb"]
+    else:
+        log.info("W&B logging disabled")
+        report_to = []
+
+    model = SmartTurnV3Model.from_pretrained(CONFIG["base_model_name"], num_labels=1, ignore_mismatched_sizes=True)
+    
+    feature_extractor = WhisperFeatureExtractor(chunk_length=8)  # 8 seconds
+
+    log_model_structure(model, CONFIG)
+
+    datasets = prepare_datasets_ondemand(feature_extractor, CONFIG)
+
+    output_dir = os.path.join(output_base_dir, run_name)
+    
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        per_device_train_batch_size=CONFIG["train_batch_size"],
+        per_device_eval_batch_size=CONFIG["eval_batch_size"],
+        num_train_epochs=CONFIG["num_epochs"],
+        eval_strategy=IntervalStrategy.STEPS,
+        gradient_accumulation_steps=1,
+        eval_steps=CONFIG["eval_steps"],
+        save_steps=CONFIG["save_steps"],
+        logging_steps=CONFIG["logging_steps"],
+        load_best_model_at_end=CONFIG["early_stopping_enabled"],
+        metric_for_best_model="f1",
+        greater_is_better=True,
+        learning_rate=CONFIG["learning_rate"],
+        warmup_ratio=CONFIG["warmup_ratio"],
+        weight_decay=CONFIG["weight_decay"],
+        lr_scheduler_type="cosine",
+        report_to=report_to,
+        dataloader_num_workers=6,
+        dataloader_prefetch_factor=4,
+        dataloader_pin_memory=True,
+        tf32=False,  # T4 GPUs don't support TF32
+        disable_tqdm=True,
+    )
+
+    os.makedirs(training_args.output_dir, exist_ok=True)
+
+    log_dataset_statistics("training", datasets["training"])
+    log_dataset_statistics("eval", datasets["eval"])
+
+    for dataset_name, dataset in datasets["test"].items():
+        log_dataset_statistics("test_" + dataset_name, dataset)
+
+    # Build callbacks list
+    callbacks = [ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])]
+    
+    # Add early stopping if enabled
+    if CONFIG["early_stopping_enabled"]:
+        log.info(f"Early stopping enabled: patience={CONFIG['early_stopping_patience']}, "
+                 f"threshold={CONFIG['early_stopping_threshold']}")
+        callbacks.append(EarlyStoppingCallback(
+            early_stopping_patience=CONFIG["early_stopping_patience"],
+            early_stopping_threshold=CONFIG["early_stopping_threshold"]
+        ))
+    else:
+        log.info("Early stopping disabled - training will run for full epochs")
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=datasets["training"],
+        eval_dataset=datasets["eval"],
+        compute_metrics=compute_metrics,
+        data_collator=SmartTurnDataCollator(),
+        callbacks=callbacks
+    )
+
+    trainer.add_callback(ExternalEvaluationCallback(
+        test_datasets=datasets["test"],
+        trainer=trainer
+    ))
+
+    log.info("Starting training...")
+    trainer.train()
+
+    final_save_path = f"{trainer.args.output_dir}/final_model"
+    os.makedirs(final_save_path, exist_ok=True)
+
+    feature_extractor.save_pretrained(final_save_path)
+    trainer.save_model(final_save_path)
+
+    export_path = os.path.join(final_save_path, "exports")
+    os.makedirs(export_path, exist_ok=True)
+
+    onnx_fp32_path = os.path.join(export_path, "model_fp32.onnx")
+
+    trainer.model.eval().cpu()
+
+    onnx_fp32_model_path = export_to_onnx_fp32(trainer.model, onnx_fp32_path, CONFIG)
+
+    log.info(f"Training and export completed. Models saved to: {final_save_path}")
+
+    if not no_wandb:
+        wandb.finish()
+
+    return onnx_fp32_model_path
+
+
+if __name__ == "__main__":
+    main()
