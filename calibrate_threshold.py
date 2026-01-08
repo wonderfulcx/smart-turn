@@ -22,20 +22,14 @@ from sklearn.metrics import (
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+from audio_utils import truncate_audio_to_last_n_seconds
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
 # Constants
 SAMPLING_RATE = 16000
 MAX_AUDIO_LENGTH = 8 * SAMPLING_RATE  # 8 seconds
-
-
-def truncate_audio(audio_array, n_seconds=8, sample_rate=16000):
-    """Truncate audio to last n seconds."""
-    max_samples = n_seconds * sample_rate
-    if len(audio_array) > max_samples:
-        return audio_array[-max_samples:]
-    return audio_array
 
 
 def load_hebrew_dataset(dataset_path):
@@ -90,8 +84,8 @@ def run_inference(onnx_path, dataset, feature_extractor):
         audio = np.array(sample["audio"]["array"], dtype=np.float32)
         label = sample["endpoint_bool"]
         
-        # Truncate to last 8 seconds
-        audio = truncate_audio(audio)
+        # Truncate to last 8 seconds (or pad if shorter)
+        audio = truncate_audio_to_last_n_seconds(audio)
         
         # Extract features (must match training code exactly!)
         features = feature_extractor(
